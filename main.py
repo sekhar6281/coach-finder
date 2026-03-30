@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker, Session, declarative_base
 # 1. DATABASE CONFIGURATION
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./coach.db")
 
+# MANDATORY FIX: SQLAlchemy requires 'postgresql://' instead of 'postgres://'
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -21,16 +22,18 @@ class CoachCenter(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     location = Column(String)
-    category = Column(String)  # Added Category (e.g., UPSC, Coding, JEE)
+    category = Column(String) 
     rating = Column(Float)
     contact = Column(String)
 
+# Create tables in the database (PostgreSQL on Render or SQLite locally)
 Base.metadata.create_all(bind=engine)
 
 # 3. APP SETUP
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
+# Dependency to get database session
 def get_db():
     db = SessionLocal()
     try:
@@ -38,14 +41,14 @@ def get_db():
     finally:
         db.close()
 
-# 4. THE HOME ROUTE (With Search Support)
+# 4. THE HOME ROUTE (With Search & 50 Sample Institutes)
 @app.get("/")
 def read_root(request: Request, search: str = None, db: Session = Depends(get_db)):
-    # 4a. Check if DB is empty and add 50 institutes
+    # 4a. Auto-populate 50 institutes if database is empty
     if db.query(CoachCenter).count() == 0:
         institutes = []
-        # Categories: IIT-JEE, NEET, UPSC, SSC, Coding, Spoken English, Music
-        data = [
+        # Sample data to rotate through
+        data_samples = [
             ("Speed Maths Academy", "Dwaraka Nagar", "Competitive", 4.5, "9876543210"),
             ("Vizag Tech Hub", "MVP Colony", "Coding", 4.8, "9988776655"),
             ("Chaitanya IIT", "Gajuwaka", "IIT-JEE", 4.2, "9123456789"),
@@ -58,15 +61,15 @@ def read_root(request: Request, search: str = None, db: Session = Depends(get_db
             ("Sangeeth Music School", "Seethammadhara", "Music", 4.4, "2211009988")
         ]
         
-        # We loop to create 50 entries based on these examples
+        # Generate 50 entries
         for i in range(1, 51):
-            base_info = data[i % len(data)]
+            base = data_samples[i % len(data_samples)]
             institutes.append(CoachCenter(
-                name=f"{base_info[0]} Unit {i}",
-                location=base_info[1],
-                category=base_info[2],
-                rating=base_info[3],
-                contact=base_info[4]
+                name=f"{base[0]} - Branch {i}",
+                location=base[1],
+                category=base[2],
+                rating=base[3],
+                contact=base[4]
             ))
         
         db.add_all(institutes)
@@ -75,7 +78,6 @@ def read_root(request: Request, search: str = None, db: Session = Depends(get_db
     # 4b. Handle Search Logic
     query = db.query(CoachCenter)
     if search:
-        # Searches in name, location, or category
         query = query.filter(
             or_(
                 CoachCenter.name.contains(search),
@@ -86,13 +88,15 @@ def read_root(request: Request, search: str = None, db: Session = Depends(get_db
     
     centers = query.all()
 
+    # 4c. Render Template with Named Arguments (Fixes 500 error)
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={"centers": centers, "search_query": search}
     )
 
-# 5. RENDER LOGIC
+# 5. EXECUTION LOGIC (Optimized for Render & Local Ubuntu)
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    # host="0.0.0.0" is required for Render deployment
     uvicorn.run(app, host="0.0.0.0", port=port)
