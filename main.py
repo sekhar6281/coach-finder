@@ -81,4 +81,4 @@ def search(category: str = None, city: str = None, db: Session = Depends(get_db)
 if __name__ == "__main__":
     print("Starting CoachFinder Server on http://127.0.0.1:8000")
     # Using the string "main:app" is the most stable way to run uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
