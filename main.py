@@ -1,26 +1,24 @@
 import os
+import uvicorn
 from fastapi import FastAPI, Request, Depends
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
-import uvicorn
 
-# 1. Database Configuration (The "Big Rock" Connection)
-# On Render, it uses DATABASE_URL. Locally, it falls back to SQLite.
+# 1. DATABASE CONNECTION
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./coach.db")
 
-# Fix for Render/PostgreSQL strings starting with 'postgres://'
+# Render uses 'postgres://', but SQLAlchemy requires 'postgresql://'
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Updated to avoid the "MovedIn20Warning"
+# FIXED: Modern way to avoid the MovedIn20Warning
 Base = declarative_base()
 
-# 2. Database Model
+# 2. DATABASE MODEL
 class CoachCenter(Base):
     __tablename__ = "coaching_centers"
     id = Column(Integer, primary_key=True, index=True)
@@ -29,18 +27,13 @@ class CoachCenter(Base):
     rating = Column(Float)
     contact = Column(String)
 
-# Create tables in the "Big Rock" (PostgreSQL)
+# Automatically create tables in PostgreSQL
 Base.metadata.create_all(bind=engine)
 
-# 3. FastAPI App Setup
+# 3. APP SETUP
 app = FastAPI()
-
-# Mount static files (CSS/JS) if you have a 'static' folder
-# app.mount("/static", StaticFiles(directory="static"), name="static")
-
 templates = Jinja2Templates(directory="templates")
 
-# Dependency to get DB session
 def get_db():
     db = SessionLocal()
     try:
@@ -48,18 +41,16 @@ def get_db():
     finally:
         db.close()
 
-# 4. Routes
+# 4. ROUTES
 @app.get("/")
 def read_root(request: Request, db: Session = Depends(get_db)):
     centers = db.query(CoachCenter).all()
     
-    # If database is empty (first run), add sample data
+    # Seed data if database is empty
     if not centers:
         sample_data = [
             CoachCenter(name="Speed Maths Academy", location="Dwaraka Nagar", rating=4.5, contact="9876543210"),
-            CoachCenter(name="Vizag Tech Hub", location="MVP Colony", rating=4.8, contact="9988776655"),
-            CoachCenter(name="Govt Job Prep", location="Gajuwaka", rating=4.2, contact="9123456789"),
-            CoachCenter(name="Python Masters", location="Siripuram", rating=4.9, contact="8877665544")
+            CoachCenter(name="Vizag Tech Hub", location="MVP Colony", rating=4.8, contact="9988776655")
         ]
         db.add_all(sample_data)
         db.commit()
@@ -67,12 +58,10 @@ def read_root(request: Request, db: Session = Depends(get_db)):
 
     return templates.TemplateResponse("index.html", {"request": request, "centers": centers})
 
-# 5. The "Render-Ready" Start Logic
+# 5. THE FIX FOR RENDER DEPLOYMENT
 if __name__ == "__main__":
-    # Render provides a PORT environment variable. Default to 10000 for local testing.
+    # Get the port from Render's environment, or use 10000 as default
     port = int(os.environ.get("PORT", 10000))
     
-    print(f"Starting CoachFinder Server on http://0.0.0.0:{port}")
-    
-    # host="0.0.0.0" allows the BigRock domain to connect to the server
+    # IMPORTANT: host must be "0.0.0.0" for Render to see the app
     uvicorn.run(app, host="0.0.0.0", port=port)
