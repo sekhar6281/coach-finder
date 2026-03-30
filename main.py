@@ -6,19 +6,18 @@ from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
 # 1. DATABASE CONFIGURATION
-# Render provides the URL in the environment. We fall back to local SQLite for safety.
+# Render provides the URL. Fallback to local SQLite for Ubuntu testing.
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./coach.db")
 
-# MANDATORY FIX: Render uses 'postgres://', but SQLAlchemy requires 'postgresql://'
+# MANDATORY FIX: SQLAlchemy requires 'postgresql://' instead of 'postgres://'
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Create the connection to the "Big Rock" (PostgreSQL)
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# 2. DATABASE MODEL (The structure of your data)
+# 2. DATABASE MODEL
 class CoachCenter(Base):
     __tablename__ = "coaching_centers"
     id = Column(Integer, primary_key=True, index=True)
@@ -27,14 +26,14 @@ class CoachCenter(Base):
     rating = Column(Float)
     contact = Column(String)
 
-# This creates the tables automatically in your new PostgreSQL database
+# Create tables in the PostgreSQL "Big Rock"
 Base.metadata.create_all(bind=engine)
 
 # 3. APP SETUP
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# Dependency to get a database connection for each request
+# Dependency to get a database session
 def get_db():
     db = SessionLocal()
     try:
@@ -45,10 +44,10 @@ def get_db():
 # 4. THE HOME ROUTE
 @app.get("/")
 def read_root(request: Request, db: Session = Depends(get_db)):
-    # Try to fetch centers from the database
+    # Fetch all coaching centers
     centers = db.query(CoachCenter).all()
     
-    # If the database is empty (first time running), add sample data
+    # If the database is empty, add sample data
     if not centers:
         sample_data = [
             CoachCenter(name="Speed Maths Academy", location="Dwaraka Nagar", rating=4.5, contact="9876543210"),
@@ -57,14 +56,20 @@ def read_root(request: Request, db: Session = Depends(get_db)):
         ]
         db.add_all(sample_data)
         db.commit()
+        # Refresh the list after adding data
         centers = db.query(CoachCenter).all()
 
-    return templates.TemplateResponse("index.html", {"request": request, "centers": centers})
+    # MODERN FIX: Passing context using named arguments to avoid TypeError
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"centers": centers}
+    )
 
-# 5. THE RENDER DEPLOYMENT LOGIC
+# 5. RENDER DEPLOYMENT LOGIC
 if __name__ == "__main__":
-    # Render assigns a dynamic port. We catch it here.
+    # Get the port from Render's environment
     port = int(os.environ.get("PORT", 10000))
     
-    # host="0.0.0.0" is the "front door" that lets the internet in
+    # host="0.0.0.0" allows external traffic to reach the app
     uvicorn.run(app, host="0.0.0.0", port=port)
