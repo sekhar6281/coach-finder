@@ -1,56 +1,44 @@
 import os
-import uvicorn
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request, Depends
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, Column, Integer, String, Float
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, declarative_base
+import uvicorn
 
-# --- 1. DATABASE CONFIGURATION ---
-# If on Render, it uses Postgres. If on your Laptop, it creates coach.db (SQLite).
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./coach.db")
+# 1. Database Configuration (The "Big Rock" Connection)
+# On Render, it uses DATABASE_URL. Locally, it falls back to SQLite.
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./coach.db")
 
-# Fix for Render's 'postgres://' vs SQLAlchemy's 'postgresql://'
+# Fix for Render/PostgreSQL strings starting with 'postgres://'
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Updated to avoid the "MovedIn20Warning"
 Base = declarative_base()
 
-# --- 2. DATABASE MODEL ---
-class Institute(Base):
-    __tablename__ = "institutes"
+# 2. Database Model
+class CoachCenter(Base):
+    __tablename__ = "coaching_centers"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
-    category = Column(String) # 'Government' or 'Software'
-    course = Column(String)
-    city = Column(String)
+    location = Column(String)
     rating = Column(Float)
+    contact = Column(String)
 
-# --- 3. LIFESPAN (Startup Logic) ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 1. Create tables automatically
-    Base.metadata.create_all(bind=engine)
-    
-    # 2. Add sample data if the database is empty
-    db = SessionLocal()
-    if db.query(Institute).count() == 0:
-        sample_centers = [
-            Institute(name="Vikas IAS Academy", category="Government", course="UPSC", city="Delhi", rating=4.8),
-            Institute(name="TechMaster Pro", category="Software", course="Python Full Stack", city="Hyderabad", rating=4.5),
-            Institute(name="Banking Career Hub", category="Government", course="IBPS PO", city="Bangalore", rating=4.2),
-            Institute(name="CodeCraft Institute", category="Software", course="Java & Spring Boot", city="Pune", rating=4.7)
-        ]
-        db.add_all(sample_centers)
-        db.commit()
-    db.close()
-    yield
+# Create tables in the "Big Rock" (PostgreSQL)
+Base.metadata.create_all(bind=engine)
 
-# --- 4. FASTAPI APP ---
-app = FastAPI(title="CoachFinder API", lifespan=lifespan)
+# 3. FastAPI App Setup
+app = FastAPI()
+
+# Mount static files (CSS/JS) if you have a 'static' folder
+# app.mount("/static", StaticFiles(directory="static"), name="static")
+
+templates = Jinja2Templates(directory="templates")
 
 # Dependency to get DB session
 def get_db():
@@ -60,25 +48,31 @@ def get_db():
     finally:
         db.close()
 
-# --- 5. API ROUTES ---
-
-# This route serves your Frontend (index.html)
+# 4. Routes
 @app.get("/")
-async def read_index():
-    return FileResponse('index.html')
+def read_root(request: Request, db: Session = Depends(get_db)):
+    centers = db.query(CoachCenter).all()
+    
+    # If database is empty (first run), add sample data
+    if not centers:
+        sample_data = [
+            CoachCenter(name="Speed Maths Academy", location="Dwaraka Nagar", rating=4.5, contact="9876543210"),
+            CoachCenter(name="Vizag Tech Hub", location="MVP Colony", rating=4.8, contact="9988776655"),
+            CoachCenter(name="Govt Job Prep", location="Gajuwaka", rating=4.2, contact="9123456789"),
+            CoachCenter(name="Python Masters", location="Siripuram", rating=4.9, contact="8877665544")
+        ]
+        db.add_all(sample_data)
+        db.commit()
+        centers = db.query(CoachCenter).all()
 
-# This route handles the search logic
-@app.get("/search")
-def search(category: str = None, city: str = None, db: Session = Depends(get_db)):
-    query = db.query(Institute)
-    if category:
-        query = query.filter(Institute.category.ilike(f"%{category}%"))
-    if city:
-        query = query.filter(Institute.city.ilike(f"%{city}%"))
-    return query.all()
+    return templates.TemplateResponse("index.html", {"request": request, "centers": centers})
 
-# --- 6. RUN THE SERVER ---
+# 5. The "Render-Ready" Start Logic
 if __name__ == "__main__":
-    print("Starting CoachFinder Server on http://127.0.0.1:8000")
-    # Using the string "main:app" is the most stable way to run uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Render provides a PORT environment variable. Default to 10000 for local testing.
+    port = int(os.environ.get("PORT", 10000))
+    
+    print(f"Starting CoachFinder Server on http://0.0.0.0:{port}")
+    
+    # host="0.0.0.0" allows the BigRock domain to connect to the server
+    uvicorn.run(app, host="0.0.0.0", port=port)
